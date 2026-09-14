@@ -36,7 +36,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Проверка: `curl http://localhost:8080/health`.
+Проверка: `curl http://localhost:8080/health`. Production API доступен по
+`https://picall.velu-vara.com`, WebSocket — `wss://picall.velu-vara.com/v1/signaling`.
 
 ## Локальная сборка
 

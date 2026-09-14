@@ -12,9 +12,9 @@ android {
         applicationId = "dev.picall.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
-        buildConfigField("String", "API_BASE_URL", "\"https://api.picall.velu-vara.com\"")
+        versionCode = 4
+        versionName = "0.3.1"
+        buildConfigField("String", "API_BASE_URL", "\"https://picall.velu-vara.com\"")
     }
 
     buildFeatures {
