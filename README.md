@@ -4,16 +4,20 @@
 WebRTC и собственный signaling-сервис. Coturn на Raspberry Pi 5 будет обеспечивать
 TURN/STUN для соединений за NAT.
 
+PiCall связывает только участников, установивших приложение. Обычные телефонные
+номера, SIM, SIP и PSTN не входят в основной сценарий.
+
 ## Текущий этап
 
 - создан Android-модуль и демонстрационный экран звонка;
 - описаны состояния звонка;
 - определены независимые контракты signaling и WebRTC;
+- добавлен публичный PiCall ID формата `PC-XXXX-XXXX`;
 - реальные сеть, медиа, авторизация и push пока не подключены.
 
 ## План MVP
 
-1. WebSocket signaling-сервис и идентификация пользователя.
+1. Регистрация с выдачей PiCall ID и WebSocket signaling-сервис.
 2. WebRTC-аудио и выдача временных TURN-учётных данных.
 3. Входящий звонок через Firebase Cloud Messaging.
 4. Android Telecom/ConnectionService и foreground service.

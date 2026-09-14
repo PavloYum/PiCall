@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.picall.android.call.CallState
+import dev.picall.android.identity.PiCallId
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
 private fun CallScreen() {
     var callee by remember { mutableStateOf("") }
     var state by remember { mutableStateOf<CallState>(CallState.Idle) }
+    val calleeId = PiCallId.parseOrNull(callee)
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -59,7 +61,14 @@ private fun CallScreen() {
             value = callee,
             onValueChange = { callee = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("ID абонента") },
+            label = { Text("PiCall ID") },
+            placeholder = { Text("PC-XXXX-XXXX") },
+            supportingText = {
+                if (callee.isNotBlank() && calleeId == null) {
+                    Text("Формат: PC-XXXX-XXXX")
+                }
+            },
+            isError = callee.isNotBlank() && calleeId == null,
             singleLine = true,
             enabled = state is CallState.Idle,
         )
@@ -67,8 +76,8 @@ private fun CallScreen() {
 
         when (state) {
             CallState.Idle -> Button(
-                onClick = { state = CallState.Dialing(callee.trim()) },
-                enabled = callee.isNotBlank(),
+                onClick = { state = CallState.Dialing(requireNotNull(calleeId).value) },
+                enabled = calleeId != null,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Позвонить") }
 
@@ -93,4 +102,3 @@ private val CallState.label: String
         CallState.Connected -> "Разговор"
         is CallState.Failed -> "Ошибка: $reason"
     }
-
