@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/bin/qemu-x86_64 -L /usr/x86_64-linux-gnu \
+    "${ANDROID_HOME:?ANDROID_HOME must point to the SDK}/build-tools/35.0.0/aapt2" "$@"

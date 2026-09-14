@@ -1,0 +1,38 @@
+# PiCall
+
+Нативное Android-приложение собственной IP-телефонии: Kotlin, Jetpack Compose,
+WebRTC и собственный signaling-сервис. Coturn на Raspberry Pi 5 будет обеспечивать
+TURN/STUN для соединений за NAT.
+
+## Текущий этап
+
+- создан Android-модуль и демонстрационный экран звонка;
+- описаны состояния звонка;
+- определены независимые контракты signaling и WebRTC;
+- реальные сеть, медиа, авторизация и push пока не подключены.
+
+## План MVP
+
+1. WebSocket signaling-сервис и идентификация пользователя.
+2. WebRTC-аудио и выдача временных TURN-учётных данных.
+3. Входящий звонок через Firebase Cloud Messaging.
+4. Android Telecom/ConnectionService и foreground service.
+5. История звонков, контакты, шифрование и наблюдаемость.
+
+## Локальная сборка
+
+Обычная рабочая станция: Android Studio с Android SDK 36 и JDK 17. Откройте
+корневую папку как Android-проект и дождитесь Gradle Sync.
+
+На текущем Raspberry Pi 5 используется сохранённый toolchain AndroidServerBot:
+
+```bash
+./tools/build-local.sh
+```
+
+Debug APK появится в `app/build/outputs/apk/debug/`.
+
+## Важное ограничение
+
+Это пока UI-каркас: кнопка «Соединить (демо)» только переключает локальное
+состояние. Она не устанавливает настоящий звонок.
