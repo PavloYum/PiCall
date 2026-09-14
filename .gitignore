@@ -6,4 +6,7 @@ build/
 *.iml
 captures/
 .DS_Store
+server/node_modules/
+server/dist/
+.env
 

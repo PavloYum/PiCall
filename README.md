@@ -23,6 +23,19 @@ PiCall связывает только участников, установив�
 4. Android Telecom/ConnectionService и foreground service.
 5. История звонков, контакты, шифрование и наблюдаемость.
 
+## Сервер
+
+В `server/` находится API регистрации/входа и WebSocket signaling. Локальный
+стек с PostgreSQL запускается через Docker Compose:
+
+```bash
+cp .env.example .env
+# замените пароли и JWT_SECRET в .env
+docker compose up --build
+```
+
+Проверка: `curl http://localhost:8080/health`.
+
 ## Локальная сборка
 
 Обычная рабочая станция: Android Studio с Android SDK 36 и JDK 17. Откройте

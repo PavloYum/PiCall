@@ -1,0 +1,23 @@
+{
+  "name": "@picall/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "npm run build && node --test test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "pg": "8.16.3",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.1",
+    "@types/pg": "8.15.5",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.2"
+  }
+}
