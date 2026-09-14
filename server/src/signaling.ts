@@ -5,7 +5,14 @@ import { verifyToken } from "./security.js";
 
 const allowedTypes = new Set(["call", "accept", "reject", "offer", "answer", "ice", "hangup"]);
 
-export function attachSignaling(server: HttpServer, jwtSecret: string): WebSocketServer {
+export class Presence {
+  private readonly online = new Set<string>();
+  isOnline(piCallId: string): boolean { return this.online.has(piCallId); }
+  connect(piCallId: string): void { this.online.add(piCallId); }
+  disconnect(piCallId: string): void { this.online.delete(piCallId); }
+}
+
+export function attachSignaling(server: HttpServer, jwtSecret: string, presence: Presence): WebSocketServer {
   const sockets = new Map<string, WebSocket>();
   const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
@@ -22,7 +29,9 @@ export function attachSignaling(server: HttpServer, jwtSecret: string): WebSocke
     const sender = request.piCallId;
     sockets.get(sender)?.close(4001, "replaced by a new connection");
     sockets.set(sender, ws);
+    presence.connect(sender);
     ws.send(JSON.stringify({ type: "ready", piCallId: sender }));
+    broadcast(sockets, sender, { type: "presence", piCallId: sender, online: true });
 
     ws.on("message", data => {
       let message: Record<string, unknown>;
@@ -34,10 +43,21 @@ export function attachSignaling(server: HttpServer, jwtSecret: string): WebSocke
       if (!target || target.readyState !== WebSocket.OPEN) { ws.send(JSON.stringify({ type: "unavailable", piCallId: recipient })); return; }
       target.send(JSON.stringify({ ...message, type, from: sender, to: recipient }));
     });
-    ws.on("close", () => { if (sockets.get(sender) === ws) sockets.delete(sender); });
+    ws.on("close", () => {
+      if (sockets.get(sender) !== ws) return;
+      sockets.delete(sender);
+      presence.disconnect(sender);
+      broadcast(sockets, sender, { type: "presence", piCallId: sender, online: false });
+    });
   });
   return webSockets;
 }
 
 interface AuthenticatedRequest extends IncomingMessage { piCallId: string }
 
+function broadcast(sockets: Map<string, WebSocket>, except: string, message: object): void {
+  const encoded = JSON.stringify(message);
+  for (const [piCallId, socket] of sockets) {
+    if (piCallId !== except && socket.readyState === WebSocket.OPEN) socket.send(encoded);
+  }
+}

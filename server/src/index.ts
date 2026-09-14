@@ -2,14 +2,15 @@ import { createServer } from "node:http";
 import { readConfig } from "./config.js";
 import { Database } from "./database.js";
 import { createHttpHandler } from "./http.js";
-import { attachSignaling } from "./signaling.js";
+import { attachSignaling, Presence } from "./signaling.js";
 
 const config = readConfig();
 const database = new Database(config.databaseUrl);
 await database.migrate();
 
-const server = createServer(createHttpHandler({ database, jwtSecret: config.jwtSecret }));
-const signaling = attachSignaling(server, config.jwtSecret);
+const presence = new Presence();
+const server = createServer(createHttpHandler({ database, jwtSecret: config.jwtSecret, presence }));
+const signaling = attachSignaling(server, config.jwtSecret, presence);
 server.listen(config.port, "0.0.0.0", () => console.log(`PiCall server listening on :${config.port}`));
 
 async function shutdown(): Promise<void> {
@@ -19,4 +20,3 @@ async function shutdown(): Promise<void> {
 }
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
-

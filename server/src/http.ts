@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Database } from "./database.js";
 import { generatePiCallId, normalizePiCallId } from "./identity.js";
-import { hashPassword, issueToken, verifyPassword } from "./security.js";
+import { hashPassword, issueToken, verifyPassword, verifyToken } from "./security.js";
+import type { Presence } from "./signaling.js";
 
-type Dependencies = { database: Database; jwtSecret: string };
+type Dependencies = { database: Database; jwtSecret: string; presence: Presence };
 
 export function createHttpHandler(deps: Dependencies) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -43,6 +44,15 @@ export function createHttpHandler(deps: Dependencies) {
         sendJson(response, 200, { piCallId: user.piCallId, displayName: user.displayName, token: issueToken(user.piCallId, deps.jwtSecret) });
         return;
       }
+      if (request.method === "GET" && request.url === "/v1/participants") {
+        const piCallId = authenticate(request, deps.jwtSecret);
+        const users = await deps.database.listUsers(piCallId);
+        const participants = users
+          .map(user => ({ ...user, online: deps.presence.isOnline(user.piCallId) }))
+          .sort((left, right) => Number(right.online) - Number(left.online) || left.displayName.localeCompare(right.displayName));
+        sendJson(response, 200, { participants });
+        return;
+      }
       sendJson(response, 404, { error: "not found" });
     } catch (error) {
       if (error instanceof RequestError) sendJson(response, error.status, { error: error.message });
@@ -52,6 +62,14 @@ export function createHttpHandler(deps: Dependencies) {
       }
     }
   };
+}
+
+function authenticate(request: IncomingMessage, secret: string): string {
+  const authorization = request.headers.authorization ?? "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const payload = verifyToken(token, secret);
+  if (!payload) throw new RequestError(401, "invalid token");
+  return payload.sub;
 }
 
 class RequestError extends Error {
@@ -81,4 +99,3 @@ function sendJson(response: ServerResponse, status: number, body: object): void 
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(encoded) });
   response.end(encoded);
 }
-

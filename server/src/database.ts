@@ -1,6 +1,7 @@
 import pg from "pg";
 
 export type UserRecord = { piCallId: string; displayName: string; passwordHash: string };
+export type PublicUser = Pick<UserRecord, "piCallId" | "displayName">;
 
 export class Database {
   private readonly pool: pg.Pool;
@@ -37,8 +38,16 @@ export class Database {
     return row ? { piCallId: row.picall_id, displayName: row.display_name, passwordHash: row.password_hash } : null;
   }
 
+  async listUsers(excludePiCallId: string): Promise<PublicUser[]> {
+    const result = await this.pool.query<{ picall_id: string; display_name: string }>(
+      `SELECT picall_id, display_name FROM users
+       WHERE picall_id <> $1 ORDER BY lower(display_name), picall_id`,
+      [excludePiCallId],
+    );
+    return result.rows.map(row => ({ piCallId: row.picall_id, displayName: row.display_name }));
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
 }
-

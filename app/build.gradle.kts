@@ -12,8 +12,9 @@ android {
         applicationId = "dev.picall.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
+        buildConfigField("String", "API_BASE_URL", "\"https://api.picall.velu-vara.com\"")
     }
 
     buildFeatures {
@@ -42,6 +43,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation(kotlin("test"))
