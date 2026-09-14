@@ -20,11 +20,34 @@ services:
       PORT: 8080
       DATABASE_URL: postgresql://${POSTGRES_USER:-picall}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-picall}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      TURN_SECRET: ${TURN_SECRET:?Set TURN_SECRET in .env}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:4.7.0-r0
+    network_mode: host
+    command:
+      - --listening-port=443
+      - --min-port=49152
+      - --max-port=65535
+      - --realm=turn.velu-vara.com
+      - --server-name=turn.velu-vara.com
+      - --external-ip=92.209.206.107/192.168.0.186
+      - --listening-ip=192.168.0.186
+      - --relay-ip=192.168.0.186
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET in .env}
+      - --fingerprint
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --log-file=stdout
     restart: unless-stopped
 
 volumes:

@@ -39,6 +39,9 @@ docker compose up --build
 Проверка: `curl http://localhost:8080/health`. Production API доступен по
 `https://picall.velu-vara.com`, WebSocket — `wss://picall.velu-vara.com/v1/signaling`.
 
+Coturn работает напрямую на `turn.velu-vara.com:443` по UDP/TCP. Авторизованный
+клиент получает временные credentials через `GET /v1/turn-credentials`.
+
 ## Локальная сборка
 
 Обычная рабочая станция: Android Studio с Android SDK 36 и JDK 17. Откройте

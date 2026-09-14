@@ -28,6 +28,7 @@ SIP/PSTN и звонки на обычные телефонные номера �
 - `POST /v1/login` — PiCall ID и пароль; возвращает новый токен.
 - `GET /health` — состояние HTTP-процесса.
 - `GET /v1/participants` — общий список участников с online-статусом.
+- `GET /v1/turn-credentials` — временные TURN credentials на один час.
 - `WS /v1/signaling?token=...` — авторизованный обмен событиями звонка.
 
 Signaling-сообщение содержит `type`, `to` и данные WebRTC. Сервер всегда

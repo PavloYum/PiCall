@@ -3,8 +3,9 @@ import type { Database } from "./database.js";
 import { generatePiCallId, normalizePiCallId } from "./identity.js";
 import { hashPassword, issueToken, verifyPassword, verifyToken } from "./security.js";
 import type { Presence } from "./signaling.js";
+import { issueTurnCredentials } from "./turn.js";
 
-type Dependencies = { database: Database; jwtSecret: string; presence: Presence };
+type Dependencies = { database: Database; jwtSecret: string; turnSecret: string; presence: Presence };
 
 export function createHttpHandler(deps: Dependencies) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -51,6 +52,11 @@ export function createHttpHandler(deps: Dependencies) {
           .map(user => ({ ...user, online: deps.presence.isOnline(user.piCallId) }))
           .sort((left, right) => Number(right.online) - Number(left.online) || left.displayName.localeCompare(right.displayName));
         sendJson(response, 200, { participants });
+        return;
+      }
+      if (request.method === "GET" && request.url === "/v1/turn-credentials") {
+        const piCallId = authenticate(request, deps.jwtSecret);
+        sendJson(response, 200, issueTurnCredentials(piCallId, deps.turnSecret));
         return;
       }
       sendJson(response, 404, { error: "not found" });
