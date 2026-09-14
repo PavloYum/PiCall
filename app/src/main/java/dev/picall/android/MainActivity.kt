@@ -1,6 +1,7 @@
 package dev.picall.android
 
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.picall.android.network.*
+import dev.picall.android.service.PiCallService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -24,12 +26,14 @@ class MainActivity : ComponentActivity() {
         val saved = prefs.getString("token", null)?.let {
             Session(prefs.getString("id", "")!!, prefs.getString("name", "")!!, it)
         }
+        if (saved != null) startForegroundService(Intent(this, PiCallService::class.java))
         setContent { MaterialTheme {
             var session by remember { mutableStateOf(saved) }
             Surface(Modifier.fillMaxSize()) {
                 if (session == null) RegistrationScreen { created ->
                     prefs.edit().putString("id", created.piCallId).putString("name", created.displayName)
                         .putString("token", created.token).apply()
+                    startForegroundService(Intent(this, PiCallService::class.java))
                     session = created
                 } else ParticipantsScreen(requireNotNull(session))
             }
@@ -68,6 +72,7 @@ private fun RegistrationScreen(onRegistered: (Session) -> Unit) {
 
 @Composable
 private fun ParticipantsScreen(session: Session) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember(session) { PiCallApi(session) }
     val participants = remember { mutableStateListOf<Participant>() }
     var message by remember { mutableStateOf("Подключение…") }
@@ -81,14 +86,6 @@ private fun ParticipantsScreen(session: Session) {
             delay(5_000)
         }
     }
-    DisposableEffect(api) {
-        api.connect({ id, online ->
-            val index = participants.indexOfFirst { it.piCallId == id }
-            if (index >= 0) participants[index] = participants[index].copy(online = online)
-        }, { message = it })
-        onDispose(api::close)
-    }
-
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Text("PiCall", style = MaterialTheme.typography.headlineLarge)
         Text("${session.displayName} · ${session.piCallId}")
@@ -103,7 +100,8 @@ private fun ParticipantsScreen(session: Session) {
                         Text("${person.piCallId} · ${if (person.online) "В сети" else "Не в сети"}")
                     }
                     OutlinedButton(onClick = {
-                        message = if (api.call(person.piCallId)) "Вызов: ${person.displayName}" else "Нет связи с сервером"
+                        context.startService(Intent(context, PiCallService::class.java).setAction(PiCallService.ACTION_CALL).putExtra(PiCallService.EXTRA_TARGET, person.piCallId))
+                        message = "Вызов: ${person.displayName}"
                     }, enabled = person.online) { Text("Позвонить") }
                 }
             }

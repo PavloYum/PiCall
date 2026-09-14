@@ -21,6 +21,7 @@ class PiCallApi(private val session: Session? = null) {
     private var closedByUser = false
     private var presenceCallback: ((String, Boolean) -> Unit)? = null
     private var errorCallback: ((String) -> Unit)? = null
+    private var readyCallback: (() -> Unit)? = null
 
     suspend fun register(name: String, password: String): Session = withContext(Dispatchers.IO) {
         val json = request("/v1/register", "POST", JSONObject().put("displayName", name).put("password", password))
@@ -32,10 +33,11 @@ class PiCallApi(private val session: Session? = null) {
         List(items.length()) { i -> items.getJSONObject(i).run { Participant(getString("piCallId"), getString("displayName"), getBoolean("online")) } }
     }
 
-    fun connect(onPresence: (String, Boolean) -> Unit, onError: (String) -> Unit) {
+    fun connect(onPresence: (String, Boolean) -> Unit, onError: (String) -> Unit, onReady: () -> Unit = {}) {
         closedByUser = false
         presenceCallback = onPresence
         errorCallback = onError
+        readyCallback = onReady
         openSignaling()
     }
 
@@ -45,6 +47,7 @@ class PiCallApi(private val session: Session? = null) {
         signaling = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val json = JSONObject(text)
+                if (json.optString("type") == "ready") readyCallback?.invoke()
                 if (json.optString("type") == "presence") presenceCallback?.invoke(json.getString("piCallId"), json.getBoolean("online"))
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
