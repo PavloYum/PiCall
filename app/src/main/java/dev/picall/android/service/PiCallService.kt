@@ -1,63 +1,157 @@
 package dev.picall.android.service
 
+import android.Manifest
 import android.app.*
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
+import androidx.core.app.NotificationCompat
 import dev.picall.android.MainActivity
 import dev.picall.android.network.PiCallApi
 import dev.picall.android.network.Session
+import dev.picall.android.webrtc.RtcEngine
+import kotlinx.coroutines.*
+import org.json.JSONObject
 
 class PiCallService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var api: PiCallApi? = null
+    private var rtc: RtcEngine? = null
+    private var remoteId: String? = null
+    private val pendingIce = mutableListOf<Triple<String, Int, String>>()
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
-        startForeground(NOTIFICATION_ID, notification("Подключение…"))
+        createChannels()
+        startConnectionForeground("Подключение…")
         val prefs = getSharedPreferences("picall", MODE_PRIVATE)
-        val token = prefs.getString("token", null)
-        if (token == null) { stopSelf(); return }
+        val token = prefs.getString("token", null) ?: run { stopSelf(); return }
         val session = Session(prefs.getString("id", "")!!, prefs.getString("name", "")!!, token)
         api = PiCallApi(session).also { client ->
             client.connect(
-                onPresence = { _, _ -> updateNotification("В сети · ${session.piCallId}") },
-                onError = { updateNotification("Переподключение…") },
-                onReady = { updateNotification("В сети · ${session.piCallId}") },
+                onPresence = { _, _ -> updateStatus("В сети · ${session.piCallId}") },
+                onError = { updateStatus("Переподключение…") },
+                onReady = { updateStatus("В сети · ${session.piCallId}") },
+                onSignal = { scope.launch { handleSignal(it) } },
             )
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CALL) intent.getStringExtra(EXTRA_TARGET)?.let { api?.call(it) }
+        when (intent?.action) {
+            ACTION_CALL -> intent.getStringExtra(EXTRA_TARGET)?.let { remoteId = it; api?.call(it); updateStatus("Вызов $it…") }
+            ACTION_ACCEPT -> acceptCall()
+            ACTION_REJECT -> remoteId?.let { api?.signal("reject", it) }.also { finishCall() }
+            ACTION_HANGUP -> remoteId?.let { api?.signal("hangup", it) }.also { finishCall() }
+        }
         return START_STICKY
     }
 
-    override fun onDestroy() { api?.close(); super.onDestroy() }
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun createChannel() {
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Связь PiCall", NotificationManager.IMPORTANCE_LOW),
-        )
+    private suspend fun handleSignal(message: JSONObject) {
+        val from = message.optString("from")
+        when (message.optString("type")) {
+            "call" -> { remoteId = from; showIncoming(from) }
+            "accept" -> { remoteId = from; prepareRtc { engine -> engine.createOffer { api?.signal("offer", from) { put("sdp", it) } } } }
+            "offer" -> { remoteId = from; prepareRtc { engine -> engine.answer(message.getString("sdp")) { api?.signal("answer", from) { put("sdp", it) } } } }
+            "answer" -> rtc?.applyAnswer(message.getString("sdp"))
+            "ice" -> {
+                val ice = Triple(message.getString("sdpMid"), message.getInt("sdpMLineIndex"), message.getString("candidate"))
+                rtc?.addIce(ice.first, ice.second, ice.third) ?: pendingIce.add(ice)
+            }
+            "reject", "hangup", "unavailable" -> finishCall()
+        }
     }
 
-    private fun notification(text: String): Notification {
+    private fun acceptCall() {
+        val target = remoteId ?: return
+        prepareRtc { api?.signal("accept", target) }
+        getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
+    }
+
+    private fun prepareRtc(ready: (RtcEngine) -> Unit) {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            updateStatus("Разрешите микрофон в PiCall")
+            return
+        }
+        enableMicrophoneForeground()
+        rtc?.let { ready(it); return }
+        val target = remoteId ?: return
+        scope.launch {
+            runCatching { requireNotNull(api).turnCredentials() }.onSuccess { turn ->
+                val engine = RtcEngine(this@PiCallService, turn,
+                    onIce = { mid, line, candidate -> api?.signal("ice", target) { put("sdpMid", mid); put("sdpMLineIndex", line); put("candidate", candidate) } },
+                    onConnected = { updateStatus("Разговор · $target") },
+                    onDisconnected = { finishCall() },
+                )
+                rtc = engine
+                pendingIce.forEach { engine.addIce(it.first, it.second, it.third) }
+                pendingIce.clear()
+                ready(engine)
+            }.onFailure { updateStatus("Ошибка TURN: ${it.message}") }
+        }
+    }
+
+    private fun finishCall() {
+        val activeRtc = rtc
+        rtc = null
+        remoteId = null
+        pendingIce.clear()
+        activeRtc?.close()
+        getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
+        updateStatus("В сети")
+    }
+
+    private fun showIncoming(from: String) {
+        val accept = PendingIntent.getService(this, 1, Intent(this, PiCallService::class.java).setAction(ACTION_ACCEPT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val reject = PendingIntent.getService(this, 2, Intent(this, PiCallService::class.java).setAction(ACTION_REJECT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, CALL_CHANNEL)
+            .setSmallIcon(android.R.drawable.sym_call_incoming).setContentTitle("Входящий звонок")
+            .setContentText(from).setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_CALL)
+            .setOngoing(true).addAction(0, "Ответить", accept).addAction(0, "Отклонить", reject).build()
+        getSystemService(NotificationManager::class.java).notify(INCOMING_ID, notification)
+    }
+
+    private fun createChannels() {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(STATUS_CHANNEL, "Связь PiCall", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel(CALL_CHANNEL, "Входящие звонки", NotificationManager.IMPORTANCE_HIGH))
+    }
+
+    private fun statusNotification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.sym_call_incoming)
-            .setContentTitle("PiCall")
-            .setContentText(text)
-            .setContentIntent(open)
-            .setOngoing(true)
-            .build()
+        val hangup = PendingIntent.getService(this, 3, Intent(this, PiCallService::class.java).setAction(ACTION_HANGUP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Builder(this, STATUS_CHANNEL).setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setContentTitle("PiCall").setContentText(text).setContentIntent(open).setOngoing(true)
+            .apply { if (remoteId != null) addAction(0, "Завершить", hangup) }.build()
     }
 
-    private fun updateNotification(text: String) = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+    private fun updateStatus(text: String) = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, statusNotification(text))
+    private fun enableMicrophoneForeground() {
+        when {
+            Build.VERSION.SDK_INT >= 34 -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            Build.VERSION.SDK_INT >= 30 -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            else -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"))
+        }
+    }
+    private fun startConnectionForeground(text: String) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, statusNotification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
+        } else startForeground(NOTIFICATION_ID, statusNotification(text))
+    }
+    override fun onDestroy() { rtc?.close(); api?.close(); scope.cancel(); super.onDestroy() }
+    override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
         const val ACTION_CALL = "dev.picall.android.CALL"
+        const val ACTION_ACCEPT = "dev.picall.android.ACCEPT"
+        const val ACTION_REJECT = "dev.picall.android.REJECT"
+        const val ACTION_HANGUP = "dev.picall.android.HANGUP"
         const val EXTRA_TARGET = "target"
-        private const val CHANNEL_ID = "picall_connection"
+        private const val STATUS_CHANNEL = "picall_connection"
+        private const val CALL_CHANNEL = "picall_calls"
         private const val NOTIFICATION_ID = 1001
+        private const val INCOMING_ID = 1002
     }
 }

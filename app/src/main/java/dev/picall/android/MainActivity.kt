@@ -2,7 +2,12 @@ package dev.picall.android
 
 import android.os.Bundle
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -73,9 +78,18 @@ private fun RegistrationScreen(onRegistered: (Session) -> Unit) {
 @Composable
 private fun ParticipantsScreen(session: Session) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
     val api = remember(session) { PiCallApi(session) }
     val participants = remember { mutableStateListOf<Participant>() }
     var message by remember { mutableStateOf("Подключение…") }
+
+    LaunchedEffect(Unit) {
+        val needed = buildList {
+            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (needed.isNotEmpty()) permissions.launch(needed.toTypedArray())
+    }
 
     LaunchedEffect(api) {
         while (true) {

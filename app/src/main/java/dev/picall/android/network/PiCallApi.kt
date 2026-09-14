@@ -13,6 +13,7 @@ import java.net.URL
 
 data class Session(val piCallId: String, val displayName: String, val token: String)
 data class Participant(val piCallId: String, val displayName: String, val online: Boolean)
+data class TurnCredentials(val urls: List<String>, val username: String, val credential: String)
 
 class PiCallApi(private val session: Session? = null) {
     private val http = OkHttpClient()
@@ -22,6 +23,7 @@ class PiCallApi(private val session: Session? = null) {
     private var presenceCallback: ((String, Boolean) -> Unit)? = null
     private var errorCallback: ((String) -> Unit)? = null
     private var readyCallback: (() -> Unit)? = null
+    private var signalCallback: ((JSONObject) -> Unit)? = null
 
     suspend fun register(name: String, password: String): Session = withContext(Dispatchers.IO) {
         val json = request("/v1/register", "POST", JSONObject().put("displayName", name).put("password", password))
@@ -33,11 +35,18 @@ class PiCallApi(private val session: Session? = null) {
         List(items.length()) { i -> items.getJSONObject(i).run { Participant(getString("piCallId"), getString("displayName"), getBoolean("online")) } }
     }
 
-    fun connect(onPresence: (String, Boolean) -> Unit, onError: (String) -> Unit, onReady: () -> Unit = {}) {
+    suspend fun turnCredentials(): TurnCredentials = withContext(Dispatchers.IO) {
+        val json = request("/v1/turn-credentials", "GET")
+        val array = json.getJSONArray("urls")
+        TurnCredentials(List(array.length()) { array.getString(it) }, json.getString("username"), json.getString("credential"))
+    }
+
+    fun connect(onPresence: (String, Boolean) -> Unit, onError: (String) -> Unit, onReady: () -> Unit = {}, onSignal: (JSONObject) -> Unit = {}) {
         closedByUser = false
         presenceCallback = onPresence
         errorCallback = onError
         readyCallback = onReady
+        signalCallback = onSignal
         openSignaling()
     }
 
@@ -49,6 +58,7 @@ class PiCallApi(private val session: Session? = null) {
                 val json = JSONObject(text)
                 if (json.optString("type") == "ready") readyCallback?.invoke()
                 if (json.optString("type") == "presence") presenceCallback?.invoke(json.getString("piCallId"), json.getBoolean("online"))
+                if (json.optString("type") in setOf("call", "accept", "reject", "offer", "answer", "ice", "hangup", "unavailable")) signalCallback?.invoke(json)
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 errorCallback?.invoke(t.message ?: "Нет соединения")
@@ -64,7 +74,10 @@ class PiCallApi(private val session: Session? = null) {
         reconnectHandler.postDelayed({ if (!closedByUser) openSignaling() }, 3_000)
     }
 
-    fun call(id: String) = signaling?.send(JSONObject().put("type", "call").put("to", id).toString()) == true
+    fun signal(type: String, id: String, configure: JSONObject.() -> Unit = {}): Boolean = signaling?.send(
+        JSONObject().put("type", type).put("to", id).apply(configure).toString(),
+    ) == true
+    fun call(id: String) = signal("call", id)
     fun close() {
         closedByUser = true
         reconnectHandler.removeCallbacksAndMessages(null)
