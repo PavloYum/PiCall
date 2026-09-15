@@ -7,9 +7,27 @@ const allowedTypes = new Set(["call", "accept", "reject", "offer", "answer", "ic
 
 export class Presence {
   private readonly online = new Set<string>();
+  private readonly calls = new Map<string, string>();
   isOnline(piCallId: string): boolean { return this.online.has(piCallId); }
+  isBusy(piCallId: string): boolean { return this.calls.has(piCallId); }
   connect(piCallId: string): void { this.online.add(piCallId); }
-  disconnect(piCallId: string): void { this.online.delete(piCallId); }
+  disconnect(piCallId: string): string | undefined {
+    this.online.delete(piCallId);
+    return this.endCall(piCallId);
+  }
+  startCall(caller: string, recipient: string): boolean {
+    if (this.calls.has(caller) || this.calls.has(recipient)) return false;
+    this.calls.set(caller, recipient);
+    this.calls.set(recipient, caller);
+    return true;
+  }
+  peer(piCallId: string): string | undefined { return this.calls.get(piCallId); }
+  endCall(piCallId: string): string | undefined {
+    const peer = this.calls.get(piCallId);
+    this.calls.delete(piCallId);
+    if (peer && this.calls.get(peer) === piCallId) this.calls.delete(peer);
+    return peer;
+  }
 }
 
 export function attachSignaling(server: HttpServer, jwtSecret: string, presence: Presence): WebSocketServer {
@@ -41,12 +59,30 @@ export function attachSignaling(server: HttpServer, jwtSecret: string, presence:
       if (!allowedTypes.has(type) || !recipient) { ws.send(JSON.stringify({ type: "error", error: "invalid signaling message" })); return; }
       const target = sockets.get(recipient);
       if (!target || target.readyState !== WebSocket.OPEN) { ws.send(JSON.stringify({ type: "unavailable", piCallId: recipient })); return; }
+      if (type === "call") {
+        if (!presence.startCall(sender, recipient)) {
+          ws.send(JSON.stringify({ type: "busy", piCallId: recipient }));
+          return;
+        }
+        broadcast(sockets, "", { type: "status", piCallIds: [sender, recipient], status: "busy" });
+      } else if (presence.peer(sender) !== recipient) {
+        ws.send(JSON.stringify({ type: "unavailable", piCallId: recipient }));
+        return;
+      }
       target.send(JSON.stringify({ ...message, type, from: sender, to: recipient }));
+      if (type === "reject" || type === "hangup") {
+        presence.endCall(sender);
+        broadcast(sockets, "", { type: "status", piCallIds: [sender, recipient], status: "online" });
+      }
     });
     ws.on("close", () => {
       if (sockets.get(sender) !== ws) return;
       sockets.delete(sender);
-      presence.disconnect(sender);
+      const peer = presence.disconnect(sender);
+      if (peer) {
+        sockets.get(peer)?.send(JSON.stringify({ type: "hangup", from: sender, to: peer }));
+        broadcast(sockets, "", { type: "status", piCallIds: [peer], status: "online" });
+      }
       broadcast(sockets, sender, { type: "presence", piCallId: sender, online: false });
     });
   });

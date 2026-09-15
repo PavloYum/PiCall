@@ -5,6 +5,9 @@ import android.content.Intent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -94,6 +97,18 @@ private fun ParticipantsScreen(session: Session) {
     val participants = remember { mutableStateListOf<Participant>() }
     var message by remember { mutableStateOf("Подключение…") }
     val call by CallSession.state.collectAsState()
+    val powerManager = remember { context.getSystemService(PowerManager::class.java) }
+    var batteryUnrestricted by remember { mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName)) }
+
+    fun requestBackgroundAccess() {
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:${context.packageName}")
+            })
+        }.onFailure {
+            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+    }
 
     LaunchedEffect(Unit) {
         val needed = buildList {
@@ -101,6 +116,11 @@ private fun ParticipantsScreen(session: Session) {
             if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (needed.isNotEmpty()) permissions.launch(needed.toTypedArray())
+        val prefs = context.getSharedPreferences("picall", android.content.Context.MODE_PRIVATE)
+        if (!batteryUnrestricted && !prefs.getBoolean("battery_prompted", false)) {
+            prefs.edit().putBoolean("battery_prompted", true).apply()
+            requestBackgroundAccess()
+        }
     }
 
     LaunchedEffect(api) {
@@ -120,20 +140,36 @@ private fun ParticipantsScreen(session: Session) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Text("PiCall", style = MaterialTheme.typography.headlineLarge)
         Text("${session.displayName} · ${session.piCallId}")
+        if (!batteryUnrestricted) {
+            Spacer(Modifier.height(12.dp))
+            AssistChip(
+                onClick = {
+                    requestBackgroundAccess()
+                    batteryUnrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                },
+                label = { Text("Разрешить постоянную работу в фоне") },
+            )
+        }
         Spacer(Modifier.height(24.dp))
         if (message.isNotEmpty()) Text(message)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(participants.sortedWith(compareByDescending<Participant> { it.online }.thenBy { it.displayName })) { person ->
+            items(participants.sortedWith(compareBy<Participant> { if (it.status == "online") 0 else if (it.status == "busy") 1 else 2 }.thenBy { it.displayName })) { person ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (person.online) "●" else "○", color = if (person.online) Color(0xFF16803A) else Color.Gray)
+                    val statusColor = when (person.status) {
+                        "online" -> Color(0xFF16803A)
+                        "busy" -> Color(0xFFD35400)
+                        else -> Color.Gray
+                    }
+                    Text(if (person.online) "●" else "○", color = statusColor)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(person.displayName, style = MaterialTheme.typography.titleMedium)
-                        Text("${person.piCallId} · ${if (person.online) "В сети" else "Не в сети"}")
+                        val statusText = when (person.status) { "online" -> "В сети"; "busy" -> "Занят"; else -> "Не в сети" }
+                        Text("${person.piCallId} · $statusText", color = statusColor)
                     }
                     OutlinedButton(onClick = {
                         context.startService(Intent(context, PiCallService::class.java).setAction(PiCallService.ACTION_CALL).putExtra(PiCallService.EXTRA_TARGET, person.piCallId))
                         message = "Вызов: ${person.displayName}"
-                    }, enabled = person.online) { Text("Позвонить") }
+                    }, enabled = person.status == "online") { Text(if (person.busy) "Занят" else "Позвонить") }
                 }
             }
         }
@@ -152,12 +188,23 @@ private fun CallScreen(call: ActiveCall) {
         CallPhase.CONNECTING -> "Соединение…"
         CallPhase.CONNECTED -> "Разговор"
     }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(call.connectedAtMillis) {
+        while (call.connectedAtMillis != null) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
     Column(
         Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Text(title, style = MaterialTheme.typography.headlineMedium)
+        call.connectedAtMillis?.let {
+            val seconds = ((now - it) / 1_000).coerceAtLeast(0)
+            Text("%02d:%02d".format(seconds / 60, seconds % 60), style = MaterialTheme.typography.titleMedium)
+        }
         Spacer(Modifier.height(12.dp))
         Text(call.remoteId, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(40.dp))
@@ -178,6 +225,16 @@ private fun CallScreen(call: ActiveCall) {
                     }
                 },
                 label = { Text(if (call.speakerEnabled) "Громкая связь включена" else "Включить громкую связь") },
+            )
+            Spacer(Modifier.height(12.dp))
+            FilterChip(
+                selected = call.microphoneMuted,
+                onClick = {
+                    action(PiCallService.ACTION_MUTE) {
+                        putExtra(PiCallService.EXTRA_MUTED, !call.microphoneMuted)
+                    }
+                },
+                label = { Text(if (call.microphoneMuted) "Микрофон выключен" else "Выключить микрофон") },
             )
             Spacer(Modifier.height(24.dp))
             Button(

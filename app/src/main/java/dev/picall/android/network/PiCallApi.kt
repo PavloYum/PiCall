@@ -10,13 +10,17 @@ import android.os.Handler
 import android.os.Looper
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 data class Session(val piCallId: String, val displayName: String, val token: String)
-data class Participant(val piCallId: String, val displayName: String, val online: Boolean)
+data class Participant(val piCallId: String, val displayName: String, val status: String) {
+    val online: Boolean get() = status != "offline"
+    val busy: Boolean get() = status == "busy"
+}
 data class TurnCredentials(val urls: List<String>, val username: String, val credential: String)
 
 class PiCallApi(private val session: Session? = null) {
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     private var signaling: WebSocket? = null
     private val reconnectHandler = Handler(Looper.getMainLooper())
     private var closedByUser = false
@@ -32,7 +36,9 @@ class PiCallApi(private val session: Session? = null) {
 
     suspend fun participants(): List<Participant> = withContext(Dispatchers.IO) {
         val items: JSONArray = request("/v1/participants", "GET").getJSONArray("participants")
-        List(items.length()) { i -> items.getJSONObject(i).run { Participant(getString("piCallId"), getString("displayName"), getBoolean("online")) } }
+        List(items.length()) { i -> items.getJSONObject(i).run {
+            Participant(getString("piCallId"), getString("displayName"), optString("status", if (getBoolean("online")) "online" else "offline"))
+        } }
     }
 
     suspend fun turnCredentials(): TurnCredentials = withContext(Dispatchers.IO) {
@@ -58,7 +64,7 @@ class PiCallApi(private val session: Session? = null) {
                 val json = JSONObject(text)
                 if (json.optString("type") == "ready") readyCallback?.invoke()
                 if (json.optString("type") == "presence") presenceCallback?.invoke(json.getString("piCallId"), json.getBoolean("online"))
-                if (json.optString("type") in setOf("call", "accept", "reject", "offer", "answer", "ice", "hangup", "unavailable")) signalCallback?.invoke(json)
+                if (json.optString("type") in setOf("call", "accept", "reject", "offer", "answer", "ice", "hangup", "unavailable", "busy")) signalCallback?.invoke(json)
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 errorCallback?.invoke(t.message ?: "Нет соединения")

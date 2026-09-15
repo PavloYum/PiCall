@@ -7,8 +7,12 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import dev.picall.android.MainActivity
 import dev.picall.android.call.CallPhase
@@ -24,6 +28,7 @@ class PiCallService : Service() {
     private var api: PiCallApi? = null
     private var rtc: RtcEngine? = null
     private var remoteId: String? = null
+    private var ringtone: Ringtone? = null
     private val pendingIce = mutableListOf<Triple<String, Int, String>>()
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { }
 
@@ -56,6 +61,7 @@ class PiCallService : Service() {
             ACTION_REJECT -> remoteId?.let { api?.signal("reject", it) }.also { finishCall() }
             ACTION_HANGUP -> remoteId?.let { api?.signal("hangup", it) }.also { finishCall() }
             ACTION_SPEAKER -> setSpeaker(intent.getBooleanExtra(EXTRA_SPEAKER, false))
+            ACTION_MUTE -> setMicrophoneMuted(intent.getBooleanExtra(EXTRA_MUTED, false))
         }
         return START_STICKY
     }
@@ -72,6 +78,11 @@ class PiCallService : Service() {
                 rtc?.addIce(ice.first, ice.second, ice.third) ?: pendingIce.add(ice)
             }
             "reject", "hangup", "unavailable" -> finishCall()
+            "busy" -> {
+                finishCall()
+                updateStatus("Абонент сейчас разговаривает")
+                Toast.makeText(this, "Абонент сейчас разговаривает", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -79,6 +90,7 @@ class PiCallService : Service() {
         val target = remoteId ?: return
         CallSession.show(target, CallPhase.CONNECTING)
         prepareRtc { api?.signal("accept", target) }
+        stopRingtone()
         getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
     }
 
@@ -130,11 +142,13 @@ class PiCallService : Service() {
         activeRtc?.close()
         resetAudioRoute()
         CallSession.clear()
+        stopRingtone()
         getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
         updateStatus("В сети")
     }
 
     private fun showIncoming(from: String) {
+        startRingtone()
         val accept = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).setAction(ACTION_ACCEPT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val reject = PendingIntent.getService(this, 2, Intent(this, PiCallService::class.java).setAction(ACTION_REJECT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CALL_CHANNEL)
@@ -148,6 +162,27 @@ class PiCallService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(STATUS_CHANNEL, "Связь PiCall", NotificationManager.IMPORTANCE_LOW))
         manager.createNotificationChannel(NotificationChannel(CALL_CHANNEL, "Входящие звонки", NotificationManager.IMPORTANCE_HIGH))
+    }
+
+    private fun startRingtone() {
+        stopRingtone()
+        ringtone = runCatching {
+            val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_RINGTONE)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            RingtoneManager.getRingtone(this, uri)?.apply {
+                audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                if (Build.VERSION.SDK_INT >= 28) isLooping = true
+                play()
+            }
+        }.getOrNull()
+    }
+
+    private fun stopRingtone() {
+        ringtone?.runCatching { stop() }
+        ringtone = null
     }
 
     private fun statusNotification(text: String): Notification {
@@ -172,6 +207,10 @@ class PiCallService : Service() {
         @Suppress("DEPRECATION")
         audio.isSpeakerphoneOn = enabled
         CallSession.setSpeaker(enabled)
+    }
+    private fun setMicrophoneMuted(muted: Boolean) {
+        rtc?.setMicrophoneMuted(muted)
+        CallSession.setMicrophoneMuted(muted)
     }
 
     private fun prepareAudioRoute() {
@@ -204,7 +243,7 @@ class PiCallService : Service() {
             startForeground(NOTIFICATION_ID, statusNotification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         } else startForeground(NOTIFICATION_ID, statusNotification(text))
     }
-    override fun onDestroy() { rtc?.close(); resetAudioRoute(); CallSession.clear(); api?.close(); scope.cancel(); super.onDestroy() }
+    override fun onDestroy() { stopRingtone(); rtc?.close(); resetAudioRoute(); CallSession.clear(); api?.close(); scope.cancel(); super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
@@ -213,8 +252,10 @@ class PiCallService : Service() {
         const val ACTION_REJECT = "dev.picall.android.REJECT"
         const val ACTION_HANGUP = "dev.picall.android.HANGUP"
         const val ACTION_SPEAKER = "dev.picall.android.SPEAKER"
+        const val ACTION_MUTE = "dev.picall.android.MUTE"
         const val EXTRA_TARGET = "target"
         const val EXTRA_SPEAKER = "speaker"
+        const val EXTRA_MUTED = "muted"
         private const val STATUS_CHANNEL = "picall_connection"
         private const val CALL_CHANNEL = "picall_calls"
         private const val NOTIFICATION_ID = 1001

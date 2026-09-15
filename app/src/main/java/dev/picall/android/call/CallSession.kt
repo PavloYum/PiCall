@@ -9,6 +9,8 @@ data class ActiveCall(
     val remoteId: String,
     val phase: CallPhase,
     val speakerEnabled: Boolean = false,
+    val microphoneMuted: Boolean = false,
+    val connectedAtMillis: Long? = null,
 )
 
 object CallSession {
@@ -16,11 +18,22 @@ object CallSession {
     val state = mutableState.asStateFlow()
 
     fun show(remoteId: String, phase: CallPhase) {
-        mutableState.value = ActiveCall(remoteId, phase, mutableState.value?.speakerEnabled ?: false)
+        val previous = mutableState.value
+        mutableState.value = ActiveCall(
+            remoteId,
+            phase,
+            previous?.speakerEnabled ?: false,
+            previous?.microphoneMuted ?: false,
+            if (phase == CallPhase.CONNECTED) previous?.connectedAtMillis ?: System.currentTimeMillis() else previous?.connectedAtMillis,
+        )
     }
 
     fun setSpeaker(enabled: Boolean) {
         mutableState.value = mutableState.value?.copy(speakerEnabled = enabled)
+    }
+
+    fun setMicrophoneMuted(muted: Boolean) {
+        mutableState.value = mutableState.value?.copy(microphoneMuted = muted)
     }
 
     fun clear() {

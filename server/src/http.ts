@@ -56,8 +56,12 @@ export function createHttpHandler(deps: Dependencies) {
         const piCallId = authenticate(request, deps.jwtSecret);
         const users = await deps.database.listUsers(piCallId);
         const participants = users
-          .map(user => ({ ...user, online: deps.presence.isOnline(user.piCallId) }))
-          .sort((left, right) => Number(right.online) - Number(left.online) || left.displayName.localeCompare(right.displayName));
+          .map(user => ({
+            ...user,
+            online: deps.presence.isOnline(user.piCallId),
+            status: !deps.presence.isOnline(user.piCallId) ? "offline" : deps.presence.isBusy(user.piCallId) ? "busy" : "online",
+          }))
+          .sort((left, right) => statusOrder(left.status) - statusOrder(right.status) || left.displayName.localeCompare(right.displayName));
         sendJson(response, 200, { participants });
         return;
       }
@@ -78,6 +82,10 @@ export function createHttpHandler(deps: Dependencies) {
       }
     }
   };
+}
+
+function statusOrder(status: string): number {
+  return status === "online" ? 0 : status === "busy" ? 1 : 2;
 }
 
 function authenticate(request: IncomingMessage, secret: string): string {

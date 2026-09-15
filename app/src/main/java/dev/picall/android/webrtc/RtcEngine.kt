@@ -20,6 +20,10 @@ class RtcEngine(
     private val peer: PeerConnection
     private val audioSource: AudioSource
     private val audioTrack: AudioTrack
+
+    fun setMicrophoneMuted(muted: Boolean) {
+        audioTrack.setEnabled(!muted)
+    }
     private val pendingIce = mutableListOf<IceCandidate>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var remoteDescriptionReady = false
