@@ -3,6 +3,8 @@ package dev.picall.android.webrtc
 import android.content.Context
 import dev.picall.android.network.TurnCredentials
 import org.webrtc.*
+import org.webrtc.audio.AudioDeviceModule
+import org.webrtc.audio.JavaAudioDeviceModule
 
 class RtcEngine(
     context: Context,
@@ -12,6 +14,7 @@ class RtcEngine(
     private val onDisconnected: () -> Unit,
 ) {
     private val factory: PeerConnectionFactory
+    private val audioDeviceModule: AudioDeviceModule
     private val peer: PeerConnection
     private val audioSource: AudioSource
     private val audioTrack: AudioTrack
@@ -21,11 +24,18 @@ class RtcEngine(
 
     init {
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
-        factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+        audioDeviceModule = JavaAudioDeviceModule.builder(context)
+            .setUseHardwareAcousticEchoCanceler(true)
+            .setUseHardwareNoiseSuppressor(true)
+            .createAudioDeviceModule()
+        factory = PeerConnectionFactory.builder()
+            .setAudioDeviceModule(audioDeviceModule)
+            .createPeerConnectionFactory()
         val servers = turn.urls.map { PeerConnection.IceServer.builder(it).setUsername(turn.username).setPassword(turn.credential).createIceServer() }
         peer = requireNotNull(factory.createPeerConnection(PeerConnection.RTCConfiguration(servers), Observer()))
         audioSource = factory.createAudioSource(MediaConstraints())
         audioTrack = factory.createAudioTrack("picall-audio", audioSource)
+        audioTrack.setEnabled(true)
         peer.addTrack(audioTrack, listOf("picall"))
     }
 
@@ -52,6 +62,7 @@ class RtcEngine(
         audioTrack.dispose()
         audioSource.dispose()
         factory.dispose()
+        audioDeviceModule.release()
     }
 
     private fun markRemoteDescriptionReady() = synchronized(pendingIce) {
@@ -91,6 +102,8 @@ class RtcEngine(
         override fun onRemoveStream(stream: MediaStream) = Unit
         override fun onDataChannel(channel: DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
-        override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) = Unit
+        override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
+            receiver.track()?.setEnabled(true)
+        }
     }
 }

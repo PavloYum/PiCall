@@ -25,6 +25,7 @@ class PiCallService : Service() {
     private var rtc: RtcEngine? = null
     private var remoteId: String? = null
     private val pendingIce = mutableListOf<Triple<String, Int, String>>()
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { }
 
     override fun onCreate() {
         super.onCreate()
@@ -94,6 +95,7 @@ class PiCallService : Service() {
             updateStatus("Не удалось включить микрофон")
             return
         }
+        prepareAudioRoute()
         rtc?.let { ready(it); return }
         val target = remoteId ?: return
         scope.launch {
@@ -170,6 +172,13 @@ class PiCallService : Service() {
         CallSession.setSpeaker(enabled)
     }
 
+    private fun prepareAudioRoute() {
+        val audio = getSystemService(AudioManager::class.java)
+        @Suppress("DEPRECATION")
+        audio.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        setSpeaker(false)
+    }
+
     private fun resetAudioRoute() {
         val audio = getSystemService(AudioManager::class.java)
         if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
@@ -177,6 +186,8 @@ class PiCallService : Service() {
             @Suppress("DEPRECATION")
             audio.isSpeakerphoneOn = false
         }
+        @Suppress("DEPRECATION")
+        audio.abandonAudioFocus(audioFocusListener)
         audio.mode = AudioManager.MODE_NORMAL
     }
     private fun enableMicrophoneForeground(): Boolean = runCatching {
