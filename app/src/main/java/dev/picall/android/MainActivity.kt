@@ -44,6 +44,14 @@ class MainActivity : ComponentActivity() {
             }
         } }
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (intent?.action == PiCallService.ACTION_ACCEPT) {
+            startService(Intent(this, PiCallService::class.java).setAction(PiCallService.ACTION_ACCEPT))
+            intent.action = null
+        }
+    }
 }
 
 @Composable

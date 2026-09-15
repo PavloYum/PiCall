@@ -75,21 +75,30 @@ class PiCallService : Service() {
             updateStatus("Разрешите микрофон в PiCall")
             return
         }
-        enableMicrophoneForeground()
+        if (!enableMicrophoneForeground()) {
+            remoteId?.let { api?.signal("reject", it) }
+            updateStatus("Не удалось включить микрофон")
+            return
+        }
         rtc?.let { ready(it); return }
         val target = remoteId ?: return
         scope.launch {
-            runCatching { requireNotNull(api).turnCredentials() }.onSuccess { turn ->
-                val engine = RtcEngine(this@PiCallService, turn,
+            runCatching {
+                val turn = requireNotNull(api).turnCredentials()
+                RtcEngine(this@PiCallService, turn,
                     onIce = { mid, line, candidate -> api?.signal("ice", target) { put("sdpMid", mid); put("sdpMLineIndex", line); put("candidate", candidate) } },
                     onConnected = { updateStatus("Разговор · $target") },
                     onDisconnected = { finishCall() },
                 )
+            }.onSuccess { engine ->
                 rtc = engine
                 pendingIce.forEach { engine.addIce(it.first, it.second, it.third) }
                 pendingIce.clear()
                 ready(engine)
-            }.onFailure { updateStatus("Ошибка TURN: ${it.message}") }
+            }.onFailure {
+                remoteId?.let { id -> api?.signal("reject", id) }
+                updateStatus("Ошибка звонка: ${it.message}")
+            }
         }
     }
 
@@ -104,7 +113,7 @@ class PiCallService : Service() {
     }
 
     private fun showIncoming(from: String) {
-        val accept = PendingIntent.getService(this, 1, Intent(this, PiCallService::class.java).setAction(ACTION_ACCEPT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val accept = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).setAction(ACTION_ACCEPT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val reject = PendingIntent.getService(this, 2, Intent(this, PiCallService::class.java).setAction(ACTION_REJECT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CALL_CHANNEL)
             .setSmallIcon(android.R.drawable.sym_call_incoming).setContentTitle("Входящий звонок")
@@ -128,13 +137,13 @@ class PiCallService : Service() {
     }
 
     private fun updateStatus(text: String) = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, statusNotification(text))
-    private fun enableMicrophoneForeground() {
+    private fun enableMicrophoneForeground(): Boolean = runCatching {
         when {
             Build.VERSION.SDK_INT >= 34 -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             Build.VERSION.SDK_INT >= 30 -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             else -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"))
         }
-    }
+    }.isSuccess
     private fun startConnectionForeground(text: String) {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, statusNotification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
