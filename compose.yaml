@@ -21,6 +21,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-picall}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-picall}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       TURN_SECRET: ${TURN_SECRET:?Set TURN_SECRET in .env}
+      CF_TURN_KEY_ID: ${CF_TURN_KEY_ID:-}
+      CF_TURN_KEY_TOKEN: ${CF_TURN_KEY_TOKEN:-}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:
@@ -34,6 +36,33 @@ services:
     command:
       - --listening-port=443
       - --min-port=49152
+      - --max-port=57343
+      - --realm=turn.velu-vara.com
+      - --server-name=turn.velu-vara.com
+      - --external-ip=92.209.206.107/192.168.0.186
+      - --listening-ip=192.168.0.186
+      - --relay-ip=192.168.0.186
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET in .env}
+      - --fingerprint
+      - --no-cli
+      - --no-tcp
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --log-file=stdout
+    restart: unless-stopped
+
+  coturn-tls:
+    image: coturn/coturn:4.7.0-r0
+    network_mode: host
+    volumes:
+      - ./turn-certs/live/turn.velu-vara.com/fullchain.pem:/certs/fullchain.pem:ro
+      - ./turn-certs/live/turn.velu-vara.com/privkey.pem:/certs/privkey.pem:ro
+    command:
+      - --listening-port=3478
+      - --tls-listening-port=443
+      - --min-port=57344
       - --max-port=65535
       - --realm=turn.velu-vara.com
       - --server-name=turn.velu-vara.com
@@ -44,8 +73,10 @@ services:
       - --static-auth-secret=${TURN_SECRET:?Set TURN_SECRET in .env}
       - --fingerprint
       - --no-cli
-      - --no-tls
+      - --no-udp
       - --no-dtls
+      - --cert=/certs/fullchain.pem
+      - --pkey=/certs/privkey.pem
       - --no-multicast-peers
       - --log-file=stdout
     restart: unless-stopped

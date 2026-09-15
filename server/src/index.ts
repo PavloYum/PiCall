@@ -9,7 +9,14 @@ const database = new Database(config.databaseUrl);
 await database.migrate();
 
 const presence = new Presence();
-const server = createServer(createHttpHandler({ database, jwtSecret: config.jwtSecret, turnSecret: config.turnSecret, presence }));
+const server = createServer(createHttpHandler({
+  database,
+  jwtSecret: config.jwtSecret,
+  turnSecret: config.turnSecret,
+  cloudflareTurnKeyId: config.cloudflareTurnKeyId,
+  cloudflareTurnKeyToken: config.cloudflareTurnKeyToken,
+  presence,
+}));
 const signaling = attachSignaling(server, config.jwtSecret, presence);
 server.listen(config.port, "0.0.0.0", () => console.log(`PiCall server listening on :${config.port}`));
 

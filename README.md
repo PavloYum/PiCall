@@ -37,8 +37,14 @@ docker compose up --build
 Проверка: `curl http://localhost:8080/health`. Production API доступен по
 `https://picall.velu-vara.com`, WebSocket — `wss://picall.velu-vara.com/v1/signaling`.
 
-Coturn работает напрямую на `turn.velu-vara.com:443` по UDP/TCP. Авторизованный
-клиент получает временные credentials через `GET /v1/turn-credentials`.
+Для международных звонков сервер выдаёт краткоживущие credentials Cloudflare
+Realtime TURN через `GET /v1/turn-credentials`. Доступны UDP, TCP и TLS 443,
+поэтому связь не зависит от CGNAT или проброса портов домашнего роутера.
+
+Домашний coturn остаётся резервным: UDP 443 обслуживает сервис `coturn`, а
+TLS/TCP 443 — `coturn-tls`. Сертификаты для последнего хранятся локально в
+`turn-certs/` и не добавляются в Git. Cloudflare TURN key задаётся переменными
+`CF_TURN_KEY_ID` и `CF_TURN_KEY_TOKEN` в `.env`.
 
 ## Локальная сборка
 

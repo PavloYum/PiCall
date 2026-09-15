@@ -3,9 +3,16 @@ import type { Database } from "./database.js";
 import { generatePiCallId, normalizePiCallId } from "./identity.js";
 import { hashPassword, issueToken, verifyPassword, verifyToken } from "./security.js";
 import type { Presence } from "./signaling.js";
-import { issueTurnCredentials } from "./turn.js";
+import { issueCloudflareTurnCredentials, issueTurnCredentials } from "./turn.js";
 
-type Dependencies = { database: Database; jwtSecret: string; turnSecret: string; presence: Presence };
+type Dependencies = {
+  database: Database;
+  jwtSecret: string;
+  turnSecret: string;
+  cloudflareTurnKeyId?: string;
+  cloudflareTurnKeyToken?: string;
+  presence: Presence;
+};
 
 export function createHttpHandler(deps: Dependencies) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -56,7 +63,10 @@ export function createHttpHandler(deps: Dependencies) {
       }
       if (request.method === "GET" && request.url === "/v1/turn-credentials") {
         const piCallId = authenticate(request, deps.jwtSecret);
-        sendJson(response, 200, issueTurnCredentials(piCallId, deps.turnSecret));
+        const credentials = deps.cloudflareTurnKeyId && deps.cloudflareTurnKeyToken
+          ? await issueCloudflareTurnCredentials(deps.cloudflareTurnKeyId, deps.cloudflareTurnKeyToken)
+          : issueTurnCredentials(piCallId, deps.turnSecret);
+        sendJson(response, 200, credentials);
         return;
       }
       sendJson(response, 404, { error: "not found" });
