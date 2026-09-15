@@ -1,6 +1,8 @@
 package dev.picall.android.webrtc
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import dev.picall.android.network.TurnCredentials
 import org.webrtc.*
 import org.webrtc.audio.AudioDeviceModule
@@ -19,6 +21,7 @@ class RtcEngine(
     private val audioSource: AudioSource
     private val audioTrack: AudioTrack
     private val pendingIce = mutableListOf<IceCandidate>()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var remoteDescriptionReady = false
     private var closed = false
 
@@ -57,7 +60,6 @@ class RtcEngine(
     fun close() {
         if (closed) return
         closed = true
-        peer.close()
         peer.dispose()
         audioTrack.dispose()
         audioSource.dispose()
@@ -76,22 +78,26 @@ class RtcEngine(
             peer.setLocalDescription(SetSdp { ready(value.description) }, value)
         }
         override fun onSetSuccess() = Unit
-        override fun onCreateFailure(error: String?) = onDisconnected()
-        override fun onSetFailure(error: String?) = onDisconnected()
+        override fun onCreateFailure(error: String?) = notifyDisconnected()
+        override fun onSetFailure(error: String?) = notifyDisconnected()
     }
 
     private inner class SetSdp(private val onSuccess: () -> Unit = {}) : SdpObserver {
         override fun onCreateSuccess(value: SessionDescription) = Unit
         override fun onSetSuccess() = onSuccess()
-        override fun onCreateFailure(error: String?) = onDisconnected()
-        override fun onSetFailure(error: String?) = onDisconnected()
+        override fun onCreateFailure(error: String?) = notifyDisconnected()
+        override fun onSetFailure(error: String?) = notifyDisconnected()
     }
 
     private inner class Observer : PeerConnection.Observer {
         override fun onIceCandidate(value: IceCandidate) = onIce(value.sdpMid ?: "0", value.sdpMLineIndex, value.sdp)
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-            if (state == PeerConnection.PeerConnectionState.CONNECTED) onConnected()
-            if (state == PeerConnection.PeerConnectionState.FAILED || state == PeerConnection.PeerConnectionState.CLOSED) onDisconnected()
+            if (state == PeerConnection.PeerConnectionState.CONNECTED) {
+                mainHandler.post { if (!closed) onConnected() }
+            }
+            if (state == PeerConnection.PeerConnectionState.FAILED || state == PeerConnection.PeerConnectionState.CLOSED) {
+                notifyDisconnected()
+            }
         }
         override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) = Unit
@@ -105,5 +111,9 @@ class RtcEngine(
         override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
             receiver.track()?.setEnabled(true)
         }
+    }
+
+    private fun notifyDisconnected() {
+        mainHandler.post { if (!closed) onDisconnected() }
     }
 }
