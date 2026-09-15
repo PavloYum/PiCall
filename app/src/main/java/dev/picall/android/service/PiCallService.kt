@@ -164,11 +164,13 @@ class PiCallService : Service() {
         audio.mode = AudioManager.MODE_IN_COMMUNICATION
         if (Build.VERSION.SDK_INT >= 31) {
             val wantedType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
-            audio.availableCommunicationDevices.firstOrNull { it.type == wantedType }?.let(audio::setCommunicationDevice)
-        } else {
-            @Suppress("DEPRECATION")
-            audio.isSpeakerphoneOn = enabled
+            val device = audio.availableCommunicationDevices.firstOrNull { it.type == wantedType }
+            if (device != null) audio.setCommunicationDevice(device) else audio.clearCommunicationDevice()
         }
+        // MIUI 13 on Android 12 does not always apply setCommunicationDevice to WebRTC's
+        // VOICE_CALL stream, so keep the legacy switch as a compatibility fallback.
+        @Suppress("DEPRECATION")
+        audio.isSpeakerphoneOn = enabled
         CallSession.setSpeaker(enabled)
     }
 
@@ -176,7 +178,7 @@ class PiCallService : Service() {
         val audio = getSystemService(AudioManager::class.java)
         @Suppress("DEPRECATION")
         audio.requestAudioFocus(audioFocusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-        setSpeaker(false)
+        setSpeaker(true)
     }
 
     private fun resetAudioRoute() {
