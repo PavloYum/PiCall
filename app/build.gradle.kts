@@ -12,8 +12,8 @@ android {
         applicationId = "dev.picall.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.0"
+        versionCode = 8
+        versionName = "0.5.0"
         buildConfigField("String", "API_BASE_URL", "\"https://picall.velu-vara.com\"")
     }
 

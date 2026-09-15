@@ -5,10 +5,14 @@ import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import dev.picall.android.MainActivity
+import dev.picall.android.call.CallPhase
+import dev.picall.android.call.CallSession
 import dev.picall.android.network.PiCallApi
 import dev.picall.android.network.Session
 import dev.picall.android.webrtc.RtcEngine
@@ -41,10 +45,16 @@ class PiCallService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_CALL -> intent.getStringExtra(EXTRA_TARGET)?.let { remoteId = it; api?.call(it); updateStatus("Вызов $it…") }
+            ACTION_CALL -> intent.getStringExtra(EXTRA_TARGET)?.let {
+                remoteId = it
+                CallSession.show(it, CallPhase.OUTGOING)
+                api?.call(it)
+                updateStatus("Вызов $it…")
+            }
             ACTION_ACCEPT -> acceptCall()
             ACTION_REJECT -> remoteId?.let { api?.signal("reject", it) }.also { finishCall() }
             ACTION_HANGUP -> remoteId?.let { api?.signal("hangup", it) }.also { finishCall() }
+            ACTION_SPEAKER -> setSpeaker(intent.getBooleanExtra(EXTRA_SPEAKER, false))
         }
         return START_STICKY
     }
@@ -52,9 +62,9 @@ class PiCallService : Service() {
     private suspend fun handleSignal(message: JSONObject) {
         val from = message.optString("from")
         when (message.optString("type")) {
-            "call" -> { remoteId = from; showIncoming(from) }
-            "accept" -> { remoteId = from; prepareRtc { engine -> engine.createOffer { api?.signal("offer", from) { put("sdp", it) } } } }
-            "offer" -> { remoteId = from; prepareRtc { engine -> engine.answer(message.getString("sdp")) { api?.signal("answer", from) { put("sdp", it) } } } }
+            "call" -> { remoteId = from; CallSession.show(from, CallPhase.INCOMING); showIncoming(from) }
+            "accept" -> { remoteId = from; CallSession.show(from, CallPhase.CONNECTING); prepareRtc { engine -> engine.createOffer { api?.signal("offer", from) { put("sdp", it) } } } }
+            "offer" -> { remoteId = from; CallSession.show(from, CallPhase.CONNECTING); prepareRtc { engine -> engine.answer(message.getString("sdp")) { api?.signal("answer", from) { put("sdp", it) } } } }
             "answer" -> rtc?.applyAnswer(message.getString("sdp"))
             "ice" -> {
                 val ice = Triple(message.getString("sdpMid"), message.getInt("sdpMLineIndex"), message.getString("candidate"))
@@ -66,17 +76,21 @@ class PiCallService : Service() {
 
     private fun acceptCall() {
         val target = remoteId ?: return
+        CallSession.show(target, CallPhase.CONNECTING)
         prepareRtc { api?.signal("accept", target) }
         getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
     }
 
     private fun prepareRtc(ready: (RtcEngine) -> Unit) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            remoteId?.let { api?.signal("reject", it) }
+            finishCall()
             updateStatus("Разрешите микрофон в PiCall")
             return
         }
         if (!enableMicrophoneForeground()) {
             remoteId?.let { api?.signal("reject", it) }
+            finishCall()
             updateStatus("Не удалось включить микрофон")
             return
         }
@@ -87,7 +101,10 @@ class PiCallService : Service() {
                 val turn = requireNotNull(api).turnCredentials()
                 RtcEngine(this@PiCallService, turn,
                     onIce = { mid, line, candidate -> api?.signal("ice", target) { put("sdpMid", mid); put("sdpMLineIndex", line); put("candidate", candidate) } },
-                    onConnected = { updateStatus("Разговор · $target") },
+                    onConnected = {
+                        CallSession.show(target, CallPhase.CONNECTED)
+                        updateStatus("Разговор · $target")
+                    },
                     onDisconnected = { finishCall() },
                 )
             }.onSuccess { engine ->
@@ -97,6 +114,7 @@ class PiCallService : Service() {
                 ready(engine)
             }.onFailure {
                 remoteId?.let { id -> api?.signal("reject", id) }
+                finishCall()
                 updateStatus("Ошибка звонка: ${it.message}")
             }
         }
@@ -108,6 +126,8 @@ class PiCallService : Service() {
         remoteId = null
         pendingIce.clear()
         activeRtc?.close()
+        resetAudioRoute()
+        CallSession.clear()
         getSystemService(NotificationManager::class.java).cancel(INCOMING_ID)
         updateStatus("В сети")
     }
@@ -137,6 +157,28 @@ class PiCallService : Service() {
     }
 
     private fun updateStatus(text: String) = getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, statusNotification(text))
+    private fun setSpeaker(enabled: Boolean) {
+        val audio = getSystemService(AudioManager::class.java)
+        audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (Build.VERSION.SDK_INT >= 31) {
+            val wantedType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            audio.availableCommunicationDevices.firstOrNull { it.type == wantedType }?.let(audio::setCommunicationDevice)
+        } else {
+            @Suppress("DEPRECATION")
+            audio.isSpeakerphoneOn = enabled
+        }
+        CallSession.setSpeaker(enabled)
+    }
+
+    private fun resetAudioRoute() {
+        val audio = getSystemService(AudioManager::class.java)
+        if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
+        else {
+            @Suppress("DEPRECATION")
+            audio.isSpeakerphoneOn = false
+        }
+        audio.mode = AudioManager.MODE_NORMAL
+    }
     private fun enableMicrophoneForeground(): Boolean = runCatching {
         when {
             Build.VERSION.SDK_INT >= 34 -> startForeground(NOTIFICATION_ID, statusNotification("Соединение…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -149,7 +191,7 @@ class PiCallService : Service() {
             startForeground(NOTIFICATION_ID, statusNotification(text), ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         } else startForeground(NOTIFICATION_ID, statusNotification(text))
     }
-    override fun onDestroy() { rtc?.close(); api?.close(); scope.cancel(); super.onDestroy() }
+    override fun onDestroy() { rtc?.close(); resetAudioRoute(); CallSession.clear(); api?.close(); scope.cancel(); super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
@@ -157,7 +199,9 @@ class PiCallService : Service() {
         const val ACTION_ACCEPT = "dev.picall.android.ACCEPT"
         const val ACTION_REJECT = "dev.picall.android.REJECT"
         const val ACTION_HANGUP = "dev.picall.android.HANGUP"
+        const val ACTION_SPEAKER = "dev.picall.android.SPEAKER"
         const val EXTRA_TARGET = "target"
+        const val EXTRA_SPEAKER = "speaker"
         private const val STATUS_CHANNEL = "picall_connection"
         private const val CALL_CHANNEL = "picall_calls"
         private const val NOTIFICATION_ID = 1001

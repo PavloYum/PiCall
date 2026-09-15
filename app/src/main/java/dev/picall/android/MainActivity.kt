@@ -20,6 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.picall.android.network.*
+import dev.picall.android.call.CallPhase
+import dev.picall.android.call.CallSession
+import dev.picall.android.call.ActiveCall
 import dev.picall.android.service.PiCallService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -90,6 +93,7 @@ private fun ParticipantsScreen(session: Session) {
     val api = remember(session) { PiCallApi(session) }
     val participants = remember { mutableStateListOf<Participant>() }
     var message by remember { mutableStateOf("Подключение…") }
+    val call by CallSession.state.collectAsState()
 
     LaunchedEffect(Unit) {
         val needed = buildList {
@@ -108,6 +112,11 @@ private fun ParticipantsScreen(session: Session) {
             delay(5_000)
         }
     }
+    if (call != null) {
+        CallScreen(requireNotNull(call))
+        return
+    }
+
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Text("PiCall", style = MaterialTheme.typography.headlineLarge)
         Text("${session.displayName} · ${session.piCallId}")
@@ -127,6 +136,54 @@ private fun ParticipantsScreen(session: Session) {
                     }, enabled = person.online) { Text("Позвонить") }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CallScreen(call: ActiveCall) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    fun action(value: String, configure: Intent.() -> Unit = {}) {
+        context.startService(Intent(context, PiCallService::class.java).setAction(value).apply(configure))
+    }
+    val title = when (call.phase) {
+        CallPhase.INCOMING -> "Входящий звонок"
+        CallPhase.OUTGOING -> "Вызов…"
+        CallPhase.CONNECTING -> "Соединение…"
+        CallPhase.CONNECTED -> "Разговор"
+    }
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(12.dp))
+        Text(call.remoteId, style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(40.dp))
+        if (call.phase == CallPhase.INCOMING) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = { action(PiCallService.ACTION_ACCEPT) }) { Text("Ответить") }
+                Button(
+                    onClick = { action(PiCallService.ACTION_REJECT) },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Отклонить") }
+            }
+        } else {
+            FilterChip(
+                selected = call.speakerEnabled,
+                onClick = {
+                    action(PiCallService.ACTION_SPEAKER) {
+                        putExtra(PiCallService.EXTRA_SPEAKER, !call.speakerEnabled)
+                    }
+                },
+                label = { Text(if (call.speakerEnabled) "Громкая связь включена" else "Включить громкую связь") },
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = { action(PiCallService.ACTION_HANGUP) },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            ) { Text("Завершить") }
         }
     }
 }

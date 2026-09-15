@@ -13,15 +13,20 @@ class RtcEngine(
 ) {
     private val factory: PeerConnectionFactory
     private val peer: PeerConnection
+    private val audioSource: AudioSource
+    private val audioTrack: AudioTrack
     private val pendingIce = mutableListOf<IceCandidate>()
     private var remoteDescriptionReady = false
+    private var closed = false
 
     init {
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
         factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
         val servers = turn.urls.map { PeerConnection.IceServer.builder(it).setUsername(turn.username).setPassword(turn.credential).createIceServer() }
         peer = requireNotNull(factory.createPeerConnection(PeerConnection.RTCConfiguration(servers), Observer()))
-        peer.addTrack(factory.createAudioTrack("picall-audio", factory.createAudioSource(MediaConstraints())), listOf("picall"))
+        audioSource = factory.createAudioSource(MediaConstraints())
+        audioTrack = factory.createAudioTrack("picall-audio", audioSource)
+        peer.addTrack(audioTrack, listOf("picall"))
     }
 
     fun createOffer(ready: (String) -> Unit) = peer.createOffer(CreateSdp(ready), MediaConstraints())
@@ -38,7 +43,16 @@ class RtcEngine(
             if (remoteDescriptionReady) peer.addIceCandidate(ice) else pendingIce += ice
         }
     }
-    fun close() { peer.close(); factory.dispose() }
+    @Synchronized
+    fun close() {
+        if (closed) return
+        closed = true
+        peer.close()
+        peer.dispose()
+        audioTrack.dispose()
+        audioSource.dispose()
+        factory.dispose()
+    }
 
     private fun markRemoteDescriptionReady() = synchronized(pendingIce) {
         remoteDescriptionReady = true
